@@ -13,45 +13,47 @@ import threading
 import webbrowser
 import logging
 
-# ── Sleep prevention ────────────────────────────────────────────────
+# ── Sleep prevention (Windows only) ─────────────────────────────────
 _ES_CONTINUOUS      = 0x80000000
 _ES_SYSTEM_REQUIRED = 0x00000001
 
 def _prevent_sleep():
-    """Block Windows auto-sleep (same trick video players use)."""
-    ctypes.windll.kernel32.SetThreadExecutionState(
-        _ES_CONTINUOUS | _ES_SYSTEM_REQUIRED
-    )
+    if sys.platform == "win32":
+        ctypes.windll.kernel32.SetThreadExecutionState(
+            _ES_CONTINUOUS | _ES_SYSTEM_REQUIRED
+        )
 
 def _allow_sleep():
-    """Restore normal sleep behaviour."""
-    ctypes.windll.kernel32.SetThreadExecutionState(_ES_CONTINUOUS)
+    if sys.platform == "win32":
+        ctypes.windll.kernel32.SetThreadExecutionState(_ES_CONTINUOUS)
 
 # ---------------------------------------------------------------------------
-# UAC auto-elevation (Windows) — must happen before anything else
+# UAC auto-elevation (Windows only)
 # ---------------------------------------------------------------------------
 def _is_admin() -> bool:
+    if sys.platform != "win32":
+        return os.geteuid() == 0
     try:
         return bool(ctypes.windll.shell32.IsUserAnAdmin())
     except Exception:
         return False
 
 def _relaunch_as_admin():
-    """Re-launch this exact process with 'runas' so UAC fires."""
+    if sys.platform != "win32":
+        print("ERROR: Run with sudo: sudo python3 main.py")
+        sys.exit(1)
     script = os.path.abspath(sys.argv[0])
     params = " ".join(f'"{a}"' for a in sys.argv[1:])
-    # ShellExecuteW returns >32 on success
     rc = ctypes.windll.shell32.ShellExecuteW(
         None, "runas", sys.executable, f'"{script}" {params}', None, 1
     )
     if rc <= 32:
-        # UAC was declined or failed — let the user know and exit
         ctypes.windll.user32.MessageBoxW(
             0,
             "Administrator privileges are required to create the iOS tunnel.\n"
             "Please re-run as administrator.",
             "iPhone Spoofer — Admin Required",
-            0x10,  # MB_ICONERROR
+            0x10,
         )
     sys.exit(0)
 
