@@ -91,9 +91,9 @@ class DeviceSpoofer:
                 raise RuntimeError("Not connected")
             try:
                 if self._ls is not None:
-                    self._ls.set(lat, lon)
+                    asyncio.run(self._ls.set(lat, lon))
                 elif self._location_service is not None:
-                    self._location_service.set(lat, lon)
+                    asyncio.run(self._location_service.set(lat, lon))
                 self._current_lat = lat
                 self._current_lon = lon
             except Exception as e:
@@ -106,9 +106,9 @@ class DeviceSpoofer:
                 return
             try:
                 if self._ls is not None:
-                    self._ls.clear()
+                    asyncio.run(self._ls.clear())
                 elif self._location_service is not None:
-                    self._location_service.clear()
+                    asyncio.run(self._location_service.clear())
                 self._current_lat = None
                 self._current_lon = None
             except Exception as e:
@@ -123,7 +123,7 @@ class DeviceSpoofer:
             # Try to clear the simulation before tearing down
             if self._ls is not None:
                 try:
-                    self._ls.clear()
+                    asyncio.run(self._ls.clear())
                 except Exception:
                     pass
                 self._ls = None
@@ -181,8 +181,8 @@ class DeviceSpoofer:
         self._ios_version = ld.product_version
 
         svc = DtSimulateLocation(lockdown=ld)
-        svc.set(0.0, 0.0)
-        svc.clear()
+        asyncio.run(svc.set(0.0, 0.0))
+        asyncio.run(svc.clear())
 
         self._lockdown = ld
         self._location_service = svc
