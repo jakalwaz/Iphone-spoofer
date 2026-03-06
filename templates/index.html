@@ -1,0 +1,1000 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>iPhone Spoofer</title>
+
+<!-- Leaflet CSS -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
+
+<style>
+/* ── Reset & Base ────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:        #0d1117;
+  --surface:   #161b22;
+  --border:    #30363d;
+  --accent:    #238636;
+  --accent-h:  #2ea043;
+  --danger:    #da3633;
+  --danger-h:  #f85149;
+  --text:      #e6edf3;
+  --muted:     #8b949e;
+  --blue:      #388bfd;
+  --yellow:    #d29922;
+  --radius:    6px;
+  --sidebar-w: 300px;
+}
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 13px;
+  overflow: hidden;
+}
+
+/* ── Layout ──────────────────────────────────────────────────────── */
+#app {
+  display: flex;
+  height: 100vh;
+}
+
+#sidebar {
+  width: var(--sidebar-w);
+  min-width: var(--sidebar-w);
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+#map-container {
+  flex: 1;
+  position: relative;
+}
+
+#map {
+  width: 100%;
+  height: 100%;
+}
+
+/* ── Sidebar pieces ───────────────────────────────────────────────── */
+.sidebar-header {
+  padding: 16px 16px 12px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.sidebar-header .logo {
+  width: 28px; height: 28px;
+  background: var(--blue);
+  border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 16px;
+}
+
+.sidebar-header h1 {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.sidebar-header .subtitle {
+  font-size: 10px;
+  color: var(--muted);
+}
+
+/* Status card */
+.status-card {
+  margin: 12px;
+  padding: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.status-row:last-child { margin-bottom: 0; }
+
+.status-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex-shrink: 0;
+}
+.status-dot.connected    { background: #3fb950; box-shadow: 0 0 6px #3fb950aa; }
+.status-dot.disconnected { background: var(--danger); }
+
+.status-label { color: var(--muted); font-size: 11px; min-width: 60px; }
+.status-value { color: var(--text); font-size: 11px; font-weight: 500; }
+
+/* Buttons */
+button {
+  cursor: pointer;
+  border: none;
+  border-radius: var(--radius);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 7px 14px;
+  transition: background 0.15s, opacity 0.15s;
+}
+button:disabled { opacity: 0.45; cursor: default; }
+
+.btn-primary {
+  background: var(--accent);
+  color: #fff;
+  width: 100%;
+}
+.btn-primary:hover:not(:disabled) { background: var(--accent-h); }
+
+.btn-danger {
+  background: var(--danger);
+  color: #fff;
+  width: 100%;
+}
+.btn-danger:hover:not(:disabled) { background: var(--danger-h); }
+
+.btn-secondary {
+  background: var(--border);
+  color: var(--text);
+}
+.btn-secondary:hover:not(:disabled) { background: #3a4149; }
+
+.btn-sm {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.connect-area {
+  padding: 0 12px 12px;
+  display: flex;
+  gap: 6px;
+}
+
+.btn-connect { flex: 1; }
+.btn-disconnect { flex: 0 0 auto; background: var(--border); color: var(--muted); }
+.btn-disconnect:hover:not(:disabled) { background: var(--danger); color: #fff; }
+
+/* Mode tabs */
+.tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  padding: 0 12px;
+  gap: 2px;
+}
+
+.tab {
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: color 0.15s, border-color 0.15s;
+  background: none;
+  border-radius: 0;
+  width: auto;
+}
+.tab:hover { color: var(--text); }
+.tab.active { color: var(--blue); border-bottom-color: var(--blue); }
+
+/* Mode panels */
+.mode-panel { display: none; padding: 12px; flex: 1; }
+.mode-panel.active { display: block; }
+
+/* Address search */
+.search-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+input[type="text"], input[type="number"] {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  padding: 6px 10px;
+  font-size: 13px;
+  outline: none;
+  width: 100%;
+}
+input[type="text"]:focus, input[type="number"]:focus {
+  border-color: var(--blue);
+}
+input::placeholder { color: var(--muted); }
+
+.hint {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 10px;
+  line-height: 1.5;
+}
+
+/* Waypoint info */
+.waypoint-info {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+/* Speed slider */
+.speed-row {
+  margin-bottom: 10px;
+}
+.speed-row label {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.speed-row label span { color: var(--text); font-weight: 600; }
+
+input[type="range"] {
+  width: 100%;
+  accent-color: var(--blue);
+  cursor: pointer;
+}
+
+.speed-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+/* Walk button row */
+.walk-btn-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+/* Joystick keyboard display */
+.kb-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 40px);
+  grid-template-rows: repeat(2, 40px);
+  gap: 4px;
+  margin: 0 auto 12px;
+  width: fit-content;
+}
+
+.key {
+  width: 40px; height: 40px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px;
+  color: var(--muted);
+  user-select: none;
+  transition: background 0.08s, color 0.08s, border-color 0.08s;
+}
+.key.pressed {
+  background: var(--blue);
+  color: #fff;
+  border-color: var(--blue);
+}
+
+.heading-display {
+  text-align: center;
+  margin-bottom: 10px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.heading-display .heading-val {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--blue);
+  display: block;
+}
+
+/* Stop simulation button at bottom of sidebar */
+.stop-area {
+  padding: 12px;
+  border-top: 1px solid var(--border);
+  margin-top: auto;
+}
+
+/* Toast notifications */
+#toast-container {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.toast {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  font-size: 12px;
+  color: var(--text);
+  max-width: 280px;
+  animation: slideIn 0.2s ease;
+  pointer-events: all;
+}
+.toast.error { border-color: var(--danger); color: var(--danger-h); }
+.toast.success { border-color: #3fb950; }
+
+@keyframes slideIn {
+  from { transform: translateX(20px); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+
+/* Leaflet overrides */
+.leaflet-container { background: #1a2030; }
+
+/* Custom pulsing marker */
+.pulse-marker {
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  background: #388bfd;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 0 #388bfd88;
+  animation: pulse 2s infinite;
+}
+@keyframes pulse {
+  0%   { box-shadow: 0 0 0 0 #388bfd88; }
+  70%  { box-shadow: 0 0 0 10px #388bfd00; }
+  100% { box-shadow: 0 0 0 0 #388bfd00; }
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <!-- ── Sidebar ─────────────────────────────────────────────── -->
+  <div id="sidebar">
+
+    <!-- Header -->
+    <div class="sidebar-header">
+      <div class="logo">📍</div>
+      <div>
+        <h1>iPhone Spoofer</h1>
+        <div class="subtitle">iOS 26 · GPS Location Override</div>
+      </div>
+    </div>
+
+    <!-- Status card -->
+    <div class="status-card">
+      <div class="status-row">
+        <div class="status-dot disconnected" id="status-dot"></div>
+        <span class="status-label">Status</span>
+        <span class="status-value" id="status-text">Disconnected</span>
+      </div>
+      <div class="status-row">
+        <div style="width:8px"></div>
+        <span class="status-label">Device</span>
+        <span class="status-value" id="status-device">—</span>
+      </div>
+      <div class="status-row">
+        <div style="width:8px"></div>
+        <span class="status-label">iOS</span>
+        <span class="status-value" id="status-ios">—</span>
+      </div>
+      <div class="status-row">
+        <div style="width:8px"></div>
+        <span class="status-label">Coords</span>
+        <span class="status-value" id="status-coords">—</span>
+      </div>
+    </div>
+
+    <!-- Connect / Disconnect -->
+    <div class="connect-area">
+      <button class="btn-primary btn-connect" id="btn-connect" onclick="doConnect()">
+        Connect Device
+      </button>
+      <button class="btn-secondary btn-disconnect btn-sm" id="btn-disconnect"
+              onclick="doDisconnect()" disabled title="Disconnect">✕</button>
+    </div>
+
+    <!-- Mode tabs -->
+    <div class="tabs">
+      <button class="tab active" onclick="switchTab('teleport', this)">Teleport</button>
+      <button class="tab"        onclick="switchTab('path', this)">Path Walk</button>
+      <button class="tab"        onclick="switchTab('joystick', this)">Joystick</button>
+    </div>
+
+    <!-- ── Teleport panel ──────────────────────────────────── -->
+    <div class="mode-panel active" id="panel-teleport">
+      <div class="search-row">
+        <input type="text" id="search-input" placeholder="Search address…" onkeydown="if(event.key==='Enter')doSearch()">
+        <button class="btn-secondary btn-sm" onclick="doSearch()" style="flex-shrink:0">Go</button>
+      </div>
+      <div class="hint">
+        🗺️ Click anywhere on the map to instantly teleport the iPhone to that location.
+      </div>
+      <div class="hint" id="teleport-coords" style="color:var(--blue);display:none"></div>
+    </div>
+
+    <!-- ── Path Walk panel ─────────────────────────────────── -->
+    <div class="mode-panel" id="panel-path">
+      <div class="hint">
+        Click the map to add waypoints. The walk follows them in order.
+      </div>
+      <div class="waypoint-info">
+        <span style="color:var(--muted);font-size:12px">Waypoints: <strong id="wp-count">0</strong></span>
+        <button class="btn-secondary btn-sm" onclick="clearWaypoints()">Clear</button>
+      </div>
+
+      <div class="speed-row">
+        <label>Speed <span id="speed-label">5 m/s — Jog</span></label>
+        <input type="range" id="speed-slider" min="1" max="30" value="5" oninput="updateSpeedLabel()">
+        <div class="speed-labels">
+          <span>Walk</span><span>Jog</span><span>Cycle</span><span>Drive</span>
+        </div>
+      </div>
+
+      <div class="walk-btn-row">
+        <button class="btn-primary" id="btn-walk" onclick="toggleWalk()" disabled>▶ Start Walk</button>
+      </div>
+    </div>
+
+    <!-- ── Joystick panel ──────────────────────────────────── -->
+    <div class="mode-panel" id="panel-joystick">
+      <div class="heading-display">
+        <span class="heading-val" id="heading-val">N</span>
+        Heading
+      </div>
+
+      <!-- Keyboard visual: row1=W, row2=A S D -->
+      <div class="kb-grid">
+        <div></div>
+        <div class="key" id="key-w">W</div>
+        <div></div>
+        <div class="key" id="key-a">A</div>
+        <div class="key" id="key-s">S</div>
+        <div class="key" id="key-d">D</div>
+      </div>
+
+      <div class="hint" style="text-align:center">
+        Hold W/A/S/D or arrow keys to move.<br>Phone updates every second.
+      </div>
+
+      <div class="speed-row">
+        <label>Speed <span id="joy-speed-label">3 m/s</span></label>
+        <input type="range" id="joy-speed-slider" min="1" max="30" value="3"
+               step="0.5" oninput="updateJoySpeed()">
+        <div class="speed-labels">
+          <span>Slow</span><span>Walk</span><span>Jog</span><span>Fast</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stop simulation -->
+    <div class="stop-area">
+      <button class="btn-danger" id="btn-stop" onclick="doStop()" disabled>
+        ■ Stop Simulation
+      </button>
+    </div>
+
+  </div><!-- /sidebar -->
+
+  <!-- ── Map ────────────────────────────────────────────────── -->
+  <div id="map-container">
+    <div id="map"></div>
+  </div>
+</div>
+
+<!-- Toast container -->
+<div id="toast-container"></div>
+
+<!-- Leaflet JS -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+
+<script>
+// ════════════════════════════════════════════════════════════════════
+//  State
+// ════════════════════════════════════════════════════════════════════
+let isConnected = false;
+let currentMode = 'teleport';
+let currentLat = 37.7749;
+let currentLon = -122.4194;
+
+// Path walk
+let waypoints = [];
+let wpMarkers = [];
+let pathPolyline = null;
+let walkInterval = null;
+let walkIndex = 0;
+let walkPath = [];
+let walkRunning = false;
+let movingMarker = null;
+
+// Joystick
+let keysDown = new Set();
+let joyInterval = null;
+let joyHeading = 0;  // degrees
+const HEADINGS = {
+  'ArrowUp': 0, 'KeyW': 0,
+  'ArrowRight': 90, 'KeyD': 90,
+  'ArrowDown': 180, 'KeyS': 180,
+  'ArrowLeft': 270, 'KeyA': 270,
+};
+const HEADING_NAMES = [
+  'N','NE','E','SE','S','SW','W','NW','N'
+];
+
+// Map
+let map, posMarker;
+let searchMarker = null;
+
+// ════════════════════════════════════════════════════════════════════
+//  Map init
+// ════════════════════════════════════════════════════════════════════
+function initMap() {
+  map = L.map('map', { zoomControl: true }).setView([currentLat, currentLon], 13);
+
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap contributors',
+    maxZoom: 19,
+  }).addTo(map);
+
+  // Custom pulsing marker
+  const pulseIcon = L.divIcon({
+    className: '',
+    html: '<div class="pulse-marker"></div>',
+    iconSize: [16, 16],
+    iconAnchor: [8, 8],
+  });
+
+  posMarker = L.marker([currentLat, currentLon], { icon: pulseIcon, zIndexOffset: 1000 })
+    .addTo(map)
+    .bindPopup('Spoofed location');
+
+  // Map click handler
+  map.on('click', onMapClick);
+}
+
+function onMapClick(e) {
+  if (!isConnected) { toast('Connect to a device first', 'error'); return; }
+  const { lat, lng } = e.latlng;
+
+  if (currentMode === 'teleport') {
+    teleportTo(lat, lng);
+  } else if (currentMode === 'path') {
+    addWaypoint(lat, lng);
+  }
+  // joystick ignores map clicks
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Utility math
+// ════════════════════════════════════════════════════════════════════
+const R = 6371000; // earth radius metres
+
+function toRad(d) { return d * Math.PI / 180; }
+function toDeg(r) { return r * 180 / Math.PI; }
+
+function haversineDistance(lat1, lon1, lat2, lon2) {
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat/2)**2 +
+            Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function moveByHeading(lat, lon, headingDeg, distM) {
+  const d = distM / R;
+  const brg = toRad(headingDeg);
+  const lat1 = toRad(lat);
+  const lon1 = toRad(lon);
+  const lat2 = Math.asin(
+    Math.sin(lat1) * Math.cos(d) +
+    Math.cos(lat1) * Math.sin(d) * Math.cos(brg)
+  );
+  const lon2 = lon1 + Math.atan2(
+    Math.sin(brg) * Math.sin(d) * Math.cos(lat1),
+    Math.cos(d) - Math.sin(lat1) * Math.sin(lat2)
+  );
+  return { lat: toDeg(lat2), lng: toDeg(lon2) };
+}
+
+function interpolatePath(waypointList, speedMs) {
+  // Returns array of {lat, lng} spaced ~speedMs metres apart (1 point per second)
+  const result = [];
+  for (let i = 0; i < waypointList.length - 1; i++) {
+    const from = waypointList[i];
+    const to   = waypointList[i + 1];
+    const dist = haversineDistance(from.lat, from.lng, to.lat, to.lng);
+    const steps = Math.max(1, Math.round(dist / speedMs));
+    for (let s = 0; s < steps; s++) {
+      const t = s / steps;
+      result.push({
+        lat: from.lat + (to.lat - from.lat) * t,
+        lng: from.lng + (to.lng - from.lng) * t,
+      });
+    }
+  }
+  if (waypointList.length > 0) result.push(waypointList[waypointList.length - 1]);
+  return result;
+}
+
+function compositeHeading() {
+  // Average heading from all currently pressed keys
+  const codes = [...keysDown];
+  if (codes.length === 0) return null;
+  // Simple: use first found key's heading
+  for (const c of codes) {
+    if (c in HEADINGS) return HEADINGS[c];
+  }
+  return null;
+}
+
+function headingName(deg) {
+  const idx = Math.round(((deg % 360) + 360) / 45) % 8;
+  return HEADING_NAMES[idx];
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  API calls
+// ════════════════════════════════════════════════════════════════════
+async function post(url, body) {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  return res.json();
+}
+
+async function sendLocation(lat, lon) {
+  try {
+    await post('/api/location', { lat, lon });
+    currentLat = lat;
+    currentLon = lon;
+    updateMarker(lat, lon);
+    document.getElementById('status-coords').textContent =
+      `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+    document.getElementById('teleport-coords').textContent =
+      `📍 ${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+    document.getElementById('teleport-coords').style.display = 'block';
+  } catch (e) {
+    toast(`Location error: ${e}`, 'error');
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Connect / Disconnect / Stop
+// ════════════════════════════════════════════════════════════════════
+async function doConnect() {
+  const btn = document.getElementById('btn-connect');
+  btn.disabled = true;
+  btn.textContent = 'Connecting…';
+  try {
+    const data = await post('/api/connect', {});
+    if (data.ok) {
+      setConnected(true, data);
+      toast(`Connected: ${data.device || 'iPhone'} (${data.ios || 'iOS'})`, 'success');
+    } else {
+      toast(data.error || 'Connection failed', 'error');
+    }
+  } catch (e) {
+    toast(`Network error: ${e}`, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Connect Device';
+  }
+}
+
+async function doDisconnect() {
+  stopWalk();
+  stopJoystick();
+  await post('/api/disconnect', {});
+  setConnected(false, {});
+  toast('Disconnected');
+}
+
+async function doStop() {
+  stopWalk();
+  stopJoystick();
+  const data = await post('/api/stop', {});
+  if (data.ok) toast('Simulation stopped — phone using real GPS', 'success');
+  else toast(data.error, 'error');
+  document.getElementById('status-coords').textContent = '—';
+  document.getElementById('teleport-coords').style.display = 'none';
+}
+
+function setConnected(val, info) {
+  isConnected = val;
+  document.getElementById('status-dot').className =
+    'status-dot ' + (val ? 'connected' : 'disconnected');
+  document.getElementById('status-text').textContent =
+    val ? 'Connected' : 'Disconnected';
+  document.getElementById('status-device').textContent =
+    val ? (info.device || 'iPhone') : '—';
+  document.getElementById('status-ios').textContent =
+    val ? (info.ios || 'iOS') : '—';
+  document.getElementById('btn-stop').disabled       = !val;
+  document.getElementById('btn-disconnect').disabled = !val;
+  if (!val) {
+    document.getElementById('status-coords').textContent = '—';
+    document.getElementById('teleport-coords').style.display = 'none';
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Tabs
+// ════════════════════════════════════════════════════════════════════
+function switchTab(mode, btn) {
+  // Stop active modes when switching
+  if (currentMode === 'path')     stopWalk();
+  if (currentMode === 'joystick') stopJoystick();
+
+  currentMode = mode;
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  btn.classList.add('active');
+  document.querySelectorAll('.mode-panel').forEach(p => p.classList.remove('active'));
+  document.getElementById('panel-' + mode).classList.add('active');
+
+  // Re-bind map clicks
+  if (mode === 'joystick') {
+    startJoystick();
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Teleport
+// ════════════════════════════════════════════════════════════════════
+function teleportTo(lat, lng) {
+  sendLocation(lat, lng);
+  map.setView([lat, lng], map.getZoom());
+}
+
+async function doSearch() {
+  const q = document.getElementById('search-input').value.trim();
+  if (!q) return;
+  try {
+    const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1`;
+    const res = await fetch(url, { headers: { 'Accept-Language': 'en' } });
+    const data = await res.json();
+    if (!data.length) { toast('Address not found', 'error'); return; }
+    const { lat, lon, display_name } = data[0];
+    const la = parseFloat(lat), lo = parseFloat(lon);
+
+    // Drop search marker
+    if (searchMarker) map.removeLayer(searchMarker);
+    searchMarker = L.marker([la, lo]).addTo(map).bindPopup(display_name).openPopup();
+    map.setView([la, lo], 15);
+
+    if (isConnected) teleportTo(la, lo);
+    else toast('Found location — connect first to teleport', '');
+  } catch (e) {
+    toast(`Search error: ${e}`, 'error');
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Path Walk
+// ════════════════════════════════════════════════════════════════════
+function addWaypoint(lat, lng) {
+  waypoints.push({ lat, lng });
+
+  const n = waypoints.length;
+  const icon = L.divIcon({
+    className: '',
+    html: `<div style="
+      background:var(--blue);color:#fff;border-radius:50%;width:22px;height:22px;
+      display:flex;align-items:center;justify-content:center;font-size:11px;
+      font-weight:700;border:2px solid #fff;box-shadow:0 1px 4px #0006">${n}</div>`,
+    iconSize: [22, 22],
+    iconAnchor: [11, 11],
+  });
+  const m = L.marker([lat, lng], { icon }).addTo(map);
+  wpMarkers.push(m);
+
+  // Update polyline
+  if (pathPolyline) map.removeLayer(pathPolyline);
+  if (waypoints.length > 1) {
+    pathPolyline = L.polyline(waypoints.map(w => [w.lat, w.lng]), {
+      color: '#388bfd', weight: 2, dashArray: '6 4',
+    }).addTo(map);
+  }
+
+  document.getElementById('wp-count').textContent = n;
+  document.getElementById('btn-walk').disabled = (n < 2 || !isConnected);
+}
+
+function clearWaypoints() {
+  stopWalk();
+  waypoints = [];
+  wpMarkers.forEach(m => map.removeLayer(m));
+  wpMarkers = [];
+  if (pathPolyline) { map.removeLayer(pathPolyline); pathPolyline = null; }
+  if (movingMarker) { map.removeLayer(movingMarker); movingMarker = null; }
+  document.getElementById('wp-count').textContent = '0';
+  document.getElementById('btn-walk').disabled = true;
+}
+
+function updateSpeedLabel() {
+  const v = parseFloat(document.getElementById('speed-slider').value);
+  let label = 'Walk';
+  if (v >= 4  && v < 8)  label = 'Jog';
+  if (v >= 8  && v < 15) label = 'Cycle';
+  if (v >= 15)            label = 'Drive';
+  document.getElementById('speed-label').textContent = `${v} m/s — ${label}`;
+}
+
+function toggleWalk() {
+  if (walkRunning) stopWalk();
+  else startWalk();
+}
+
+function startWalk() {
+  if (waypoints.length < 2 || !isConnected) return;
+  const speed = parseFloat(document.getElementById('speed-slider').value);
+  walkPath  = interpolatePath(waypoints, speed);
+  walkIndex = 0;
+  walkRunning = true;
+  document.getElementById('btn-walk').textContent = '■ Stop Walk';
+
+  // Moving marker
+  if (movingMarker) map.removeLayer(movingMarker);
+  const moveIcon = L.divIcon({
+    className: '',
+    html: '<div style="background:#d29922;width:12px;height:12px;border-radius:50%;border:2px solid #fff"></div>',
+    iconSize: [12, 12], iconAnchor: [6, 6],
+  });
+  movingMarker = L.marker([walkPath[0].lat, walkPath[0].lng], { icon: moveIcon }).addTo(map);
+
+  walkInterval = setInterval(() => {
+    if (walkIndex >= walkPath.length) { stopWalk(); return; }
+    const pt = walkPath[walkIndex++];
+    sendLocation(pt.lat, pt.lng);
+    movingMarker.setLatLng([pt.lat, pt.lng]);
+    map.panTo([pt.lat, pt.lng], { animate: false });
+  }, 1000);
+}
+
+function stopWalk() {
+  if (walkInterval) { clearInterval(walkInterval); walkInterval = null; }
+  walkRunning = false;
+  document.getElementById('btn-walk').textContent = '▶ Start Walk';
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Joystick
+// ════════════════════════════════════════════════════════════════════
+function updateJoySpeed() {
+  const v = parseFloat(document.getElementById('joy-speed-slider').value);
+  document.getElementById('joy-speed-label').textContent = `${v} m/s`;
+}
+
+function startJoystick() {
+  if (joyInterval) return;
+  joyInterval = setInterval(joyTick, 1000);
+}
+
+function stopJoystick() {
+  if (joyInterval) { clearInterval(joyInterval); joyInterval = null; }
+  keysDown.clear();
+  ['w','a','s','d'].forEach(k => {
+    document.getElementById('key-' + k)?.classList.remove('pressed');
+  });
+}
+
+function joyTick() {
+  if (!isConnected || keysDown.size === 0) return;
+  const heading = compositeHeading();
+  if (heading === null) return;
+
+  const speed = parseFloat(document.getElementById('joy-speed-slider').value);
+  const next = moveByHeading(currentLat, currentLon, heading, speed);
+  joyHeading = heading;
+  document.getElementById('heading-val').textContent = headingName(heading);
+  sendLocation(next.lat, next.lng);
+}
+
+const KEY_MAP = {
+  ArrowUp: 'w', KeyW: 'w',
+  ArrowLeft: 'a', KeyA: 'a',
+  ArrowDown: 's', KeyS: 's',
+  ArrowRight: 'd', KeyD: 'd',
+};
+
+document.addEventListener('keydown', e => {
+  if (currentMode !== 'joystick') return;
+  const k = KEY_MAP[e.code];
+  if (!k) return;
+  e.preventDefault();
+  keysDown.add(e.code);
+  document.getElementById('key-' + k)?.classList.add('pressed');
+});
+
+document.addEventListener('keyup', e => {
+  const k = KEY_MAP[e.code];
+  if (!k) return;
+  keysDown.delete(e.code);
+  document.getElementById('key-' + k)?.classList.remove('pressed');
+});
+
+// ════════════════════════════════════════════════════════════════════
+//  Map marker
+// ════════════════════════════════════════════════════════════════════
+function updateMarker(lat, lng) {
+  posMarker.setLatLng([lat, lng]);
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Status polling
+// ════════════════════════════════════════════════════════════════════
+async function fetchStatus() {
+  try {
+    const data = await fetch('/api/status').then(r => r.json());
+    if (data.connected !== isConnected) {
+      setConnected(data.connected, data);
+    }
+    if (data.lat && data.lon) {
+      document.getElementById('status-coords').textContent =
+        `${parseFloat(data.lat).toFixed(5)}, ${parseFloat(data.lon).toFixed(5)}`;
+      updateMarker(data.lat, data.lon);
+      currentLat = data.lat;
+      currentLon = data.lon;
+    }
+  } catch (_) { /* server unreachable */ }
+}
+
+setInterval(fetchStatus, 2000);
+
+// ════════════════════════════════════════════════════════════════════
+//  Toast
+// ════════════════════════════════════════════════════════════════════
+function toast(msg, type = '') {
+  const el = document.createElement('div');
+  el.className = 'toast' + (type ? ' ' + type : '');
+  el.textContent = msg;
+  document.getElementById('toast-container').appendChild(el);
+  setTimeout(() => el.remove(), 3500);
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Init
+// ════════════════════════════════════════════════════════════════════
+initMap();
+updateSpeedLabel();
+updateJoySpeed();
+
+// Center map on real location at startup
+if (navigator.geolocation) {
+  navigator.geolocation.getCurrentPosition(
+    pos => {
+      const { latitude: lat, longitude: lng } = pos.coords;
+      currentLat = lat;
+      currentLon = lng;
+      map.setView([lat, lng], 15);
+      posMarker.setLatLng([lat, lng]);
+    },
+    () => { /* permission denied or unavailable — keep default */ }
+  );
+}
+</script>
+</body>
+</html>
