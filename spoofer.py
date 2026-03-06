@@ -1,7 +1,7 @@
 """
 spoofer.py — pymobiledevice3 wrapper for iOS GPS spoofing.
 
-iOS 17+ / iOS 26: CoreDeviceTunnelProxy (direct USB, requires WinTun + admin).
+iOS 17+ / iOS 26: CoreDeviceTunnelProxy (direct USB, requires admin).
 Older iOS: DtSimulateLocation via lockdown (fallback).
 """
 
@@ -42,14 +42,29 @@ class DeviceSpoofer:
 
         # Lockdown path
         self._lockdown = None
-        self._location_service = None   # DtSimulateLocation instance
+        self._location_service = None
+        self._lockdown_loop = None      # persistent event loop for lockdown async calls
 
         # Tunnel path
-        self._rsd = None                # RemoteServiceDiscoveryService
-        self._dvt = None                # DvtSecureSocketProxyService
-        self._ls = None                 # LocationSimulation
-        self._tunnel_thread = None      # background asyncio thread
-        self._tunnel_stop = None        # threading.Event to shut down tunnel
+        self._rsd = None
+        self._dvt = None
+        self._ls = None
+        self._tunnel_thread = None
+        self._tunnel_stop = None
+        self._tunnel_loop = None        # tunnel thread's event loop
+
+    # ------------------------------------------------------------------
+    # Helpers — run async code on the correct event loop
+    # ------------------------------------------------------------------
+
+    def _lockdown_run(self, coro):
+        """Run a coroutine on the persistent lockdown event loop."""
+        return self._lockdown_loop.run_until_complete(coro)
+
+    def _tunnel_run(self, coro):
+        """Schedule a coroutine on the tunnel thread's event loop and wait for result."""
+        fut = asyncio.run_coroutine_threadsafe(coro, self._tunnel_loop)
+        return fut.result(timeout=10)
 
     # ------------------------------------------------------------------
     # Public API
@@ -91,9 +106,9 @@ class DeviceSpoofer:
                 raise RuntimeError("Not connected")
             try:
                 if self._ls is not None:
-                    asyncio.run(self._ls.set(lat, lon))
+                    self._tunnel_run(self._ls.set(lat, lon))
                 elif self._location_service is not None:
-                    asyncio.run(self._location_service.set(lat, lon))
+                    self._lockdown_run(self._location_service.set(lat, lon))
                 self._current_lat = lat
                 self._current_lon = lon
             except Exception as e:
@@ -106,9 +121,9 @@ class DeviceSpoofer:
                 return
             try:
                 if self._ls is not None:
-                    asyncio.run(self._ls.clear())
+                    self._tunnel_run(self._ls.clear())
                 elif self._location_service is not None:
-                    asyncio.run(self._location_service.clear())
+                    self._lockdown_run(self._location_service.clear())
                 self._current_lat = None
                 self._current_lon = None
             except Exception as e:
@@ -120,10 +135,10 @@ class DeviceSpoofer:
             self._current_lat = None
             self._current_lon = None
 
-            # Try to clear the simulation before tearing down
-            if self._ls is not None:
+            # Clear simulation on tunnel loop BEFORE signaling stop
+            if self._ls is not None and self._tunnel_loop is not None:
                 try:
-                    asyncio.run(self._ls.clear())
+                    self._tunnel_run(self._ls.clear())
                 except Exception:
                     pass
                 self._ls = None
@@ -137,8 +152,8 @@ class DeviceSpoofer:
                 self._tunnel_thread.join(timeout=5)
                 self._tunnel_thread = None
 
-            # DVT and RSD are cleaned up inside the background thread,
-            # but close them here too in case the thread already exited.
+            self._tunnel_loop = None
+
             if self._dvt is not None:
                 try:
                     self._dvt.close()
@@ -147,17 +162,27 @@ class DeviceSpoofer:
                 self._dvt = None
 
             if self._rsd is not None:
-                # close() is async — the background tunnel thread handles the real
-                # cleanup; just drop the reference here.
                 self._rsd = None
 
             # Lockdown path cleanup
             if self._location_service is not None:
                 try:
+                    if self._lockdown_loop is not None:
+                        self._lockdown_run(self._location_service.clear())
+                except Exception:
+                    pass
+                try:
                     self._location_service.close()
                 except Exception:
                     pass
                 self._location_service = None
+
+            if self._lockdown_loop is not None:
+                try:
+                    self._lockdown_loop.close()
+                except Exception:
+                    pass
+                self._lockdown_loop = None
 
             self._device_name = None
             self._ios_version = None
@@ -176,13 +201,16 @@ class DeviceSpoofer:
     # ------------------------------------------------------------------
 
     def _connect_lockdown(self):
-        ld = asyncio.run(create_using_usbmux())
+        loop = asyncio.new_event_loop()
+        self._lockdown_loop = loop
+
+        ld = loop.run_until_complete(create_using_usbmux())
         self._device_name = ld.display_name or ld.udid[:8]
         self._ios_version = ld.product_version
 
         svc = DtSimulateLocation(lockdown=ld)
-        asyncio.run(svc.set(0.0, 0.0))
-        asyncio.run(svc.clear())
+        loop.run_until_complete(svc.set(0.0, 0.0))
+        loop.run_until_complete(svc.clear())
 
         self._lockdown = ld
         self._location_service = svc
@@ -212,7 +240,6 @@ class DeviceSpoofer:
                         (tunnel_result.address, tunnel_result.port)
                     )
 
-                    # ── async part: connect the underlying QUIC/XPC service ──
                     await rsd.service.connect()
                     rsd.peer_info = await rsd.service.receive_response()
                     rsd.udid = rsd.peer_info["Properties"]["UniqueDeviceID"]
@@ -221,16 +248,9 @@ class DeviceSpoofer:
                     rsd.all_values = {}
                     logger.info(f"RSD: {rsd.product_type} {rsd.product_version}")
 
-                    # ── sync part: run in executor so the event loop keeps
-                    #    forwarding WinTun packets while the TCP handshake runs ──
-                    loop = asyncio.get_event_loop()
-                    logger.info("Opening DVT service (in executor)…")
-                    def _open_dvt():
-                        d = DvtSecureSocketProxyService(rsd)
-                        d.perform_handshake()
-                        return d
-
-                    dvt = await loop.run_in_executor(None, _open_dvt)
+                    logger.info("Opening DVT service…")
+                    dvt = DvtSecureSocketProxyService(rsd)
+                    await dvt.perform_handshake()
                     logger.info("DVT open + handshake done!")
                     result_q.put(("ok", rsd, dvt))
                 except Exception as exc:
@@ -258,6 +278,7 @@ class DeviceSpoofer:
         def _thread():
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
+            self._tunnel_loop = loop
             try:
                 loop.run_until_complete(_run_tunnel())
             except Exception as exc:
@@ -308,4 +329,3 @@ class DeviceSpoofer:
         except Exception:
             self._device_name = "iPhone"
             self._ios_version = "iOS 26"
-
