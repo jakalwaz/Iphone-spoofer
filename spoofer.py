@@ -176,7 +176,7 @@ class DeviceSpoofer:
     # ------------------------------------------------------------------
 
     def _connect_lockdown(self):
-        ld = create_using_usbmux()
+        ld = asyncio.run(create_using_usbmux())
         self._device_name = ld.display_name or ld.udid[:8]
         self._ios_version = ld.product_version
 
@@ -194,15 +194,14 @@ class DeviceSpoofer:
     def _connect_tunnel(self):
         """
         Establish a CoreDevice tunnel directly over USB using CoreDeviceTunnelProxy.
-        Requires: WinTun driver + administrator privileges.
         Runs the async tunnel in a daemon background thread.
         """
-        ld = create_using_usbmux()
         result_q = Q.Queue()
         stop_event = threading.Event()
         self._tunnel_stop = stop_event
 
         async def _run_tunnel():
+            ld = await create_using_usbmux()
             proxy = await CoreDeviceTunnelProxy.create(ld)
             async with proxy.start_tcp_tunnel() as tunnel_result:
                 rsd = None
