@@ -8,6 +8,7 @@ Older iOS: DtSimulateLocation via lockdown (fallback).
 import asyncio
 import queue as Q
 import threading
+import time
 import logging
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,14 @@ try:
     TUNNEL_AVAILABLE = True
 except ImportError:
     TUNNEL_AVAILABLE = False
+
+
+async def _usbmux():
+    """Prefer the USB link: iOS drops the Wi-Fi one whenever the phone locks."""
+    try:
+        return await create_using_usbmux(connection_type="USB")
+    except Exception:
+        return await create_using_usbmux()
 
 
 async def _mount_ddi(ld):
@@ -86,6 +95,8 @@ class DeviceSpoofer:
         with self._lock:
             if self._connected:
                 return
+            logger.info("connect requested")
+            self._cleanup()  # drop a dead link before retrying; under the lock so racing connects don't undo each other
 
             # 1. Try lockdown (works for older iOS)
             if LOCKDOWN_AVAILABLE:
@@ -143,61 +154,82 @@ class DeviceSpoofer:
 
     def disconnect(self):
         with self._lock:
-            self._connected = False
-            self._current_lat = None
-            self._current_lon = None
+            self._cleanup()
 
-            # Clear simulation on tunnel loop BEFORE signaling stop
-            if self._ls is not None and self._tunnel_loop is not None:
-                try:
-                    self._tunnel_run(self._ls.clear())
-                except Exception:
-                    pass
-                self._ls = None
+    def _cleanup(self):
+        self._connected = False
+        self._current_lat = None
+        self._current_lon = None
 
-            # Signal the background tunnel thread to exit
-            if self._tunnel_stop is not None:
-                self._tunnel_stop.set()
-                self._tunnel_stop = None
+        # Clear simulation on tunnel loop BEFORE signaling stop
+        if self._ls is not None and self._tunnel_loop is not None:
+            try:
+                self._tunnel_run(self._ls.clear())
+            except Exception:
+                pass
+            self._ls = None
 
-            if self._tunnel_thread is not None:
-                self._tunnel_thread.join(timeout=5)
-                self._tunnel_thread = None
+        # Signal the background tunnel thread to exit
+        if self._tunnel_stop is not None:
+            self._tunnel_stop.set()
+            self._tunnel_stop = None
 
-            self._tunnel_loop = None
+        if self._tunnel_thread is not None:
+            self._tunnel_thread.join(timeout=5)
+            self._tunnel_thread = None
 
-            if self._dvt is not None:
-                try:
-                    self._dvt.close()
-                except Exception:
-                    pass
-                self._dvt = None
+        self._tunnel_loop = None
 
-            if self._rsd is not None:
-                self._rsd = None
+        if self._dvt is not None:
+            try:
+                self._dvt.close()
+            except Exception:
+                pass
+            self._dvt = None
 
-            # Lockdown path cleanup
-            if self._location_service is not None:
-                try:
-                    if self._lockdown_loop is not None:
-                        self._lockdown_run(self._location_service.clear())
-                except Exception:
-                    pass
-                try:
-                    self._location_service.close()
-                except Exception:
-                    pass
-                self._location_service = None
+        if self._rsd is not None:
+            self._rsd = None
 
-            if self._lockdown_loop is not None:
-                try:
-                    self._lockdown_loop.close()
-                except Exception:
-                    pass
-                self._lockdown_loop = None
+        # Lockdown path cleanup
+        if self._location_service is not None:
+            try:
+                if self._lockdown_loop is not None:
+                    self._lockdown_run(self._location_service.clear())
+            except Exception:
+                pass
+            try:
+                self._location_service.close()
+            except Exception:
+                pass
+            self._location_service = None
 
-            self._device_name = None
-            self._ios_version = None
+        if self._lockdown_loop is not None:
+            try:
+                self._lockdown_loop.close()
+            except Exception:
+                pass
+            self._lockdown_loop = None
+
+        self._device_name = None
+        self._ios_version = None
+
+    def _heal(self, spot):
+        """Reconnect right after a drop and put the spot back, so the real GPS gap is ~1-2 s."""
+        for _ in range(60):
+            if self._connected:  # someone else (app/page) already reconnected
+                break
+            try:
+                self.connect()
+                break
+            except Exception as e:
+                logger.info(f"heal: retrying ({e})")
+                time.sleep(1)
+        if spot and self._connected and self._current_lat is None:
+            try:
+                self.set_location(*spot)
+                logger.info("heal: spot restored")
+            except Exception as e:
+                logger.warning(f"heal: restore failed: {e}")
 
     def get_status(self) -> dict:
         return {
@@ -216,7 +248,7 @@ class DeviceSpoofer:
         loop = asyncio.new_event_loop()
         self._lockdown_loop = loop
 
-        ld = loop.run_until_complete(create_using_usbmux())
+        ld = loop.run_until_complete(_usbmux())
         self._device_name = ld.display_name or ld.udid[:8]
         self._ios_version = ld.product_version
         if int(ld.product_version.split(".")[0]) >= 17:
@@ -244,9 +276,10 @@ class DeviceSpoofer:
         self._tunnel_stop = stop_event
 
         async def _run_tunnel():
-            ld = await create_using_usbmux()
+            ld = await _usbmux()
             proxy = await CoreDeviceTunnelProxy.create(ld)
             async with proxy.start_tcp_tunnel() as tunnel_result:
+                up = False
                 try:
                     logger.info(f"Tunnel up: {tunnel_result.address}:{tunnel_result.port}")
                     async with RemoteServiceDiscoveryService(
@@ -256,13 +289,23 @@ class DeviceSpoofer:
                         await _mount_ddi(rsd)
                         async with DvtProvider(rsd) as dvt, LocationSimulation(dvt) as ls:
                             result_q.put(("ok", rsd, ls, ld.display_name))
-                            # Keep the tunnel alive until disconnect() signals us
-                            await asyncio.get_running_loop().run_in_executor(None, stop_event.wait)
-                except Exception as exc:
+                            up = True
+                            # Heartbeat: re-send the spot every 1 s. A dead link raises here, so we
+                            # notice within seconds (instead of on the next move) and the app reconnects.
+                            while not stop_event.is_set():
+                                await asyncio.sleep(1)
+                                if self._current_lat is not None:
+                                    await ls.set(self._current_lat, self._current_lon)
+                except (Exception, asyncio.CancelledError) as exc:
+                    if up:  # was connected, then the link dropped (iOS does this on unlock)
+                        logger.warning(f"Phone link dropped: {exc!r}; reconnecting")
+                        self._connected = False
+                        spot = None if self._current_lat is None else (self._current_lat, self._current_lon)
+                        threading.Thread(target=self._heal, args=(spot,), daemon=True).start()
+                        return
                     import traceback
                     logger.error(f"Setup failed:\n{traceback.format_exc()}")
-                    if result_q.empty():
-                        result_q.put(("error", exc))
+                    result_q.put(("error", exc))
 
         def _thread():
             loop = asyncio.new_event_loop()

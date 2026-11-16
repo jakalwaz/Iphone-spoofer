@@ -106,8 +106,6 @@ def index():
 @app.route("/api/connect", methods=["POST"])
 def api_connect():
     try:
-        if not spoofer.get_status()["connected"]:
-            spoofer.disconnect()  # drop a dead tunnel left by a dropped phone before retrying
         spoofer.connect()
         _prevent_sleep()
         status = spoofer.get_status()
