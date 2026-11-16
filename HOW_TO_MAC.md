@@ -1,6 +1,8 @@
 # iPhone Spoofer — Mac Setup Guide
 
-This app runs on Python directly on Mac. There is no .exe — ignore the `dist/` folder entirely.
+**Mac app:** run `./mac/build_app.sh` once. It installs "iPhone Spoofer" to `~/Applications` (menu bar icon + map window, no browser).
+
+**Quick run:** double-click `start.command` (first run installs everything, then asks for your Mac password). Steps below are the manual route.
 
 ---
 
@@ -75,7 +77,7 @@ sudo python3 main.py
 
 Enter your Mac password when asked. This is normal — it's just for the USB tunnel, same as the Windows app auto-elevating via UAC.
 
-The browser will open automatically at `http://127.0.0.1:5000`. If it doesn't, open it manually.
+The browser will open automatically at `http://127.0.0.1:5055`. If it doesn't, open it manually.
 
 ---
 
@@ -103,9 +105,7 @@ Run `pip3 install pymobiledevice3` and try again.
 - Open Finder — does your iPhone show up in the sidebar? If not, trust the connection on your phone.
 - Make sure no other app is holding the connection (Xcode, 3uTools, etc.).
 
-**Port 5000 already in use**
-macOS Monterey+ uses port 5000 for AirPlay Receiver. Disable it:
-System Settings > General > AirDrop & Handoff > AirPlay Receiver > OFF
+**Port 5055 already in use**
 
 Then re-run the app.
 

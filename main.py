@@ -2,7 +2,7 @@
 main.py — Flask server for iPhone GPS Spoofer.
 
 Run with: python main.py
-Opens browser automatically at http://localhost:5000
+Opens browser automatically at http://localhost:5055
 Requires admin privileges for iOS 17+ tunnel — auto-elevates via UAC if needed.
 """
 
@@ -106,6 +106,8 @@ def index():
 @app.route("/api/connect", methods=["POST"])
 def api_connect():
     try:
+        if not spoofer.get_status()["connected"]:
+            spoofer.disconnect()  # drop a dead tunnel left by a dropped phone before retrying
         spoofer.connect()
         _prevent_sleep()
         status = spoofer.get_status()
@@ -153,6 +155,16 @@ def api_disconnect():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+@app.route("/api/quit", methods=["POST"])
+def api_quit():
+    """Called by the Mac app on quit: release the phone, then exit the server."""
+    try:
+        spoofer.disconnect()
+    finally:
+        threading.Timer(0.3, lambda: os._exit(0)).start()
+    return jsonify({"ok": True})
+
+
 @app.route("/api/status", methods=["GET"])
 def api_status():
     return jsonify(spoofer.get_status())
@@ -163,10 +175,11 @@ def api_status():
 # ---------------------------------------------------------------------------
 
 def open_browser():
-    webbrowser.open("http://127.0.0.1:5000")
+    webbrowser.open("http://127.0.0.1:5055")
 
 
 if __name__ == "__main__":
-    threading.Timer(1.5, open_browser).start()
-    logger.info("Starting iPhone Spoofer at http://127.0.0.1:5000")
-    app.run(host="127.0.0.1", port=5000, debug=False, use_reloader=False)
+    if not os.environ.get("SPOOFER_NO_BROWSER"):  # the Mac app opens the browser itself
+        threading.Timer(1.5, open_browser).start()
+    logger.info("Starting iPhone Spoofer at http://127.0.0.1:5055")
+    app.run(host="127.0.0.1", port=5055, debug=False, use_reloader=False)

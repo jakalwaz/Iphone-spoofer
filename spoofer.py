@@ -16,6 +16,8 @@ logger = logging.getLogger(__name__)
 try:
     from pymobiledevice3.lockdown import create_using_usbmux
     from pymobiledevice3.services.simulate_location import DtSimulateLocation
+    from pymobiledevice3.services.mobile_image_mounter import auto_mount
+    from pymobiledevice3.exceptions import AlreadyMountedError
     LOCKDOWN_AVAILABLE = True
 except ImportError:
     LOCKDOWN_AVAILABLE = False
@@ -24,11 +26,21 @@ except ImportError:
 try:
     from pymobiledevice3.remote.tunnel_service import CoreDeviceTunnelProxy
     from pymobiledevice3.remote.remote_service_discovery import RemoteServiceDiscoveryService
-    from pymobiledevice3.services.dvt.dvt_secure_socket_proxy import DvtSecureSocketProxyService
+    from pymobiledevice3.services.dvt.instruments.dvt_provider import DvtProvider
     from pymobiledevice3.services.dvt.instruments.location_simulation import LocationSimulation
     TUNNEL_AVAILABLE = True
 except ImportError:
     TUNNEL_AVAILABLE = False
+
+
+async def _mount_ddi(ld):
+    """Mount the Developer Disk Image; location simulation needs it. No-op if already mounted."""
+    try:
+        await auto_mount(ld)
+    except AlreadyMountedError:
+        pass
+    except Exception as e:
+        logger.warning(f"DDI auto-mount: {e}")
 
 
 class DeviceSpoofer:
@@ -207,6 +219,9 @@ class DeviceSpoofer:
         ld = loop.run_until_complete(create_using_usbmux())
         self._device_name = ld.display_name or ld.udid[:8]
         self._ios_version = ld.product_version
+        if int(ld.product_version.split(".")[0]) >= 17:
+            raise RuntimeError("iOS 17+ needs the CoreDevice tunnel")
+        loop.run_until_complete(_mount_ddi(ld))
 
         svc = DtSimulateLocation(lockdown=ld)
         loop.run_until_complete(svc.set(0.0, 0.0))
@@ -232,48 +247,22 @@ class DeviceSpoofer:
             ld = await create_using_usbmux()
             proxy = await CoreDeviceTunnelProxy.create(ld)
             async with proxy.start_tcp_tunnel() as tunnel_result:
-                rsd = None
-                dvt = None
                 try:
                     logger.info(f"Tunnel up: {tunnel_result.address}:{tunnel_result.port}")
-                    rsd = RemoteServiceDiscoveryService(
+                    async with RemoteServiceDiscoveryService(
                         (tunnel_result.address, tunnel_result.port)
-                    )
-
-                    await rsd.service.connect()
-                    rsd.peer_info = await rsd.service.receive_response()
-                    rsd.udid = rsd.peer_info["Properties"]["UniqueDeviceID"]
-                    rsd.product_type = rsd.peer_info["Properties"]["ProductType"]
-                    rsd.lockdown = None
-                    rsd.all_values = {}
-                    logger.info(f"RSD: {rsd.product_type} {rsd.product_version}")
-
-                    logger.info("Opening DVT service…")
-                    dvt = DvtSecureSocketProxyService(rsd)
-                    await dvt.perform_handshake()
-                    logger.info("DVT open + handshake done!")
-                    result_q.put(("ok", rsd, dvt))
+                    ) as rsd:
+                        logger.info(f"RSD: {rsd.product_type} {rsd.product_version}")
+                        await _mount_ddi(rsd)
+                        async with DvtProvider(rsd) as dvt, LocationSimulation(dvt) as ls:
+                            result_q.put(("ok", rsd, ls, ld.display_name))
+                            # Keep the tunnel alive until disconnect() signals us
+                            await asyncio.get_running_loop().run_in_executor(None, stop_event.wait)
                 except Exception as exc:
                     import traceback
                     logger.error(f"Setup failed:\n{traceback.format_exc()}")
-                    result_q.put(("error", exc))
-                    return
-
-                # Keep the tunnel alive until disconnect() signals us
-                loop = asyncio.get_event_loop()
-                await loop.run_in_executor(None, stop_event.wait)
-
-                # Clean up inside the tunnel context
-                if dvt is not None:
-                    try:
-                        dvt.close()
-                    except Exception:
-                        pass
-                if rsd is not None:
-                    try:
-                        await rsd.close()
-                    except Exception:
-                        pass
+                    if result_q.empty():
+                        result_q.put(("error", exc))
 
         def _thread():
             loop = asyncio.new_event_loop()
@@ -309,23 +298,9 @@ class DeviceSpoofer:
         if item[0] == "error":
             raise item[1]
 
-        _, rsd, dvt = item
+        _, rsd, ls, name = item
         self._rsd = rsd
-        self._dvt = dvt
+        self._ls = ls
 
-        try:
-            ls = LocationSimulation(dvt)
-            self._ls = ls
-        except Exception as e:
-            import traceback
-            logger.error(f"LocationSimulation init failed:\n{traceback.format_exc()}")
-            raise
-
-        # Read device info from RSD
-        try:
-            props = rsd.peer_info.get("Properties", {})
-            self._device_name = props.get("ProductType", "iPhone")
-            self._ios_version = props.get("ProductVersion", "iOS 26")
-        except Exception:
-            self._device_name = "iPhone"
-            self._ios_version = "iOS 26"
+        self._device_name = name or rsd.product_type
+        self._ios_version = rsd.product_version

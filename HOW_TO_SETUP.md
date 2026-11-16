@@ -9,7 +9,7 @@ If you have the `iPhoneSpoofer.exe` file:
 1. Copy `iPhoneSpoofer.exe` onto their computer (USB, Google Drive, Discord, whatever)
 2. Double-click it
 3. Click **Yes** on the UAC admin prompt
-4. Browser opens automatically at `http://127.0.0.1:5000`
+4. Browser opens automatically at `http://127.0.0.1:5055`
 5. Done
 
 ---
@@ -101,7 +101,7 @@ sudo python3 main.py
 ```
 Enter the Mac password when asked.
 
-The browser will open automatically at `http://127.0.0.1:5000`
+The browser will open automatically at `http://127.0.0.1:5055`
 
 If it doesn't open, go there manually in any browser.
 
@@ -136,8 +136,7 @@ Use `python -m pip install -r requirements.txt` instead
 **`python` not recognised**
 Try `python3` instead. If still nothing, Python isn't installed or wasn't added to PATH — reinstall and tick "Add Python to PATH"
 
-**Port 5000 already in use (Mac)**
-Go to System Settings > General > AirDrop & Handoff > AirPlay Receiver > turn OFF, then re-run
+**Port 5055 already in use (Mac)**
 
 **Device not found / connection fails**
 - Make sure Developer Mode is ON
